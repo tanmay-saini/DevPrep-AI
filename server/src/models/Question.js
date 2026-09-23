@@ -49,6 +49,10 @@ const questionSchema = new mongoose.Schema(
       default: [],
       index: true,
     },
+    description: {
+      type: String,
+      default: '',
+    },
     sampleAnswer: {
       type: String,
       required: [true, 'Sample answer or solution explanation is required'],
