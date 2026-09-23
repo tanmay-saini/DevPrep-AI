@@ -93,39 +93,52 @@ Respond strictly in valid JSON format:
   "spaceComplexity": "<e.g. O(1) or O(n)>"
 }`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-    });
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: prompt,
+      });
 
-    let text = response.text.trim();
-    if (text.startsWith('```')) {
-      text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      let text = response.text.trim();
+      if (text.startsWith('```')) {
+        text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      }
+
+      const parsed = JSON.parse(text);
+      return {
+        success: parsed.exitCode === 0 && !parsed.stderr,
+        language,
+        version: `${language} (AI Sandboxed Runner)`,
+        stdout: parsed.stdout || '',
+        stderr: parsed.stderr || '',
+        output: parsed.stdout || parsed.stderr || '',
+        exitCode: parsed.exitCode || 0,
+        timeComplexity: parsed.timeComplexity || '',
+        spaceComplexity: parsed.spaceComplexity || '',
+      };
+    } catch (err) {
+      const isRateLimit = err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED') || err.message.includes('quota');
+      if (isRateLimit && attempt === 1) {
+        // Wait 1.5 seconds and retry once
+        await new Promise((res) => setTimeout(res, 1500));
+        continue;
+      }
+
+      console.error('[Code Execution Service] AI runner error:', err.message);
+      const friendlyError = isRateLimit
+        ? 'AI execution rate limit reached (Gemini free tier quota). Please wait a few seconds before retrying, or switch to JavaScript for instant local VM execution.'
+        : `Execution error: ${err.message}`;
+
+      return {
+        success: false,
+        language,
+        stdout: '',
+        stderr: friendlyError,
+        output: friendlyError,
+        exitCode: 1,
+      };
     }
-
-    const parsed = JSON.parse(text);
-    return {
-      success: parsed.exitCode === 0 && !parsed.stderr,
-      language,
-      version: `${language} (AI Sandboxed Runner)`,
-      stdout: parsed.stdout || '',
-      stderr: parsed.stderr || '',
-      output: parsed.stdout || parsed.stderr || '',
-      exitCode: parsed.exitCode || 0,
-      timeComplexity: parsed.timeComplexity || '',
-      spaceComplexity: parsed.spaceComplexity || '',
-    };
-  } catch (err) {
-    console.error('[Code Execution Service] AI runner error:', err.message);
-    return {
-      success: false,
-      language,
-      stdout: '',
-      stderr: err.message,
-      output: err.message,
-      exitCode: 1,
-    };
   }
 };
 
