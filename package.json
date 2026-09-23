@@ -1,0 +1,14 @@
+{
+  "name": "ai-interview-prep",
+  "version": "1.0.0",
+  "description": "Full-Stack AI-Powered Web Development Interview Preparation Platform",
+  "main": "server/src/server.js",
+  "scripts": {
+    "server": "cmd /c \"cd server && npm run dev\"",
+    "client": "cmd /c \"cd client && npm run dev\"",
+    "install:all": "cmd /c \"cd server && npm install\" && cmd /c \"cd client && npm install\""
+  },
+  "keywords": ["interview-prep", "mern", "gemini-ai", "piston", "react"],
+  "author": "",
+  "license": "ISC"
+}
