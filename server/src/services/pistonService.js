@@ -74,6 +74,7 @@ const executeWithAI = async ({ language, code, stdin = '' }) => {
   }
 
   const ai = new GoogleGenAI({ apiKey });
+  const models = ['gemini-3.6-flash', 'gemini-3-flash-preview'];
 
   const prompt = `You are a sandboxed code execution engine.
 Language: ${language}
@@ -93,53 +94,52 @@ Respond strictly in valid JSON format:
   "spaceComplexity": "<e.g. O(1) or O(n)>"
 }`;
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt,
-      });
+  for (const model of models) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+        });
 
-      let text = response.text.trim();
-      if (text.startsWith('```')) {
-        text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        let text = response.text.trim();
+        if (text.startsWith('```')) {
+          text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        }
+
+        const parsed = JSON.parse(text);
+        return {
+          success: parsed.exitCode === 0 && !parsed.stderr,
+          language,
+          version: `${language} (AI Sandboxed Runner)`,
+          stdout: parsed.stdout || '',
+          stderr: parsed.stderr || '',
+          output: parsed.stdout || parsed.stderr || '',
+          exitCode: parsed.exitCode || 0,
+          timeComplexity: parsed.timeComplexity || '',
+          spaceComplexity: parsed.spaceComplexity || '',
+        };
+      } catch (err) {
+        const isTemporary = err.message.includes('503') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED') || err.message.includes('UNAVAILABLE');
+        if (isTemporary && attempt === 1) {
+          await new Promise((res) => setTimeout(res, 1000));
+          continue;
+        }
+        // If this model failed, break inner loop to try next fallback model
+        console.warn(`[Code Execution Service] Model ${model} error:`, err.message);
+        break;
       }
-
-      const parsed = JSON.parse(text);
-      return {
-        success: parsed.exitCode === 0 && !parsed.stderr,
-        language,
-        version: `${language} (AI Sandboxed Runner)`,
-        stdout: parsed.stdout || '',
-        stderr: parsed.stderr || '',
-        output: parsed.stdout || parsed.stderr || '',
-        exitCode: parsed.exitCode || 0,
-        timeComplexity: parsed.timeComplexity || '',
-        spaceComplexity: parsed.spaceComplexity || '',
-      };
-    } catch (err) {
-      const isRateLimit = err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED') || err.message.includes('quota');
-      if (isRateLimit && attempt === 1) {
-        // Wait 1.5 seconds and retry once
-        await new Promise((res) => setTimeout(res, 1500));
-        continue;
-      }
-
-      console.error('[Code Execution Service] AI runner error:', err.message);
-      const friendlyError = isRateLimit
-        ? 'AI execution rate limit reached (Gemini free tier quota). Please wait a few seconds before retrying, or switch to JavaScript for instant local VM execution.'
-        : `Execution error: ${err.message}`;
-
-      return {
-        success: false,
-        language,
-        stdout: '',
-        stderr: friendlyError,
-        output: friendlyError,
-        exitCode: 1,
-      };
     }
   }
+
+  return {
+    success: false,
+    language,
+    stdout: '',
+    stderr: 'Runner is currently busy or rate-limited. Please wait a few moments and try again.',
+    output: 'Runner is currently busy or rate-limited. Please wait a few moments and try again.',
+    exitCode: 1,
+  };
 };
 
 // Dedicated LeetCode Testcase Execution Judge
@@ -150,6 +150,7 @@ export const judgeLeetCodeExecution = async ({ language, code, testCases = [], p
   }
 
   const ai = new GoogleGenAI({ apiKey });
+  const models = ['gemini-3.6-flash', 'gemini-3-flash-preview'];
 
   const formattedTestCases = testCases
     .map((tc, i) => `Case ${i + 1}:\nInput: ${tc.input}\nExpected Output: ${tc.expectedOutput}`)
@@ -198,77 +199,78 @@ Respond STRICTLY in valid JSON (no markdown wrapping, no extra text):
   ]
 }`;
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt,
-      });
+  for (const model of models) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+        });
 
-      let text = response.text.trim();
-      if (text.startsWith('```')) {
-        text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        let text = response.text.trim();
+        if (text.startsWith('```')) {
+          text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        }
+
+        const parsed = JSON.parse(text);
+        const results = (parsed.testCaseResults || []).map((res, i) => ({
+          caseNumber: res.caseNumber || i + 1,
+          input: res.input || (testCases[i] ? testCases[i].input : ''),
+          expectedOutput: res.expectedOutput || (testCases[i] ? testCases[i].expectedOutput : ''),
+          actualOutput: res.actualOutput !== undefined ? String(res.actualOutput) : '(no return value)',
+          passed: Boolean(res.passed),
+          error: res.error || '',
+        }));
+
+        const allPassed = results.length > 0 ? results.every((r) => r.passed) : Boolean(parsed.allPassed);
+
+        return {
+          success: allPassed && !parsed.stderr,
+          language,
+          version: `${language} (LeetCode Online Judge)`,
+          stdout: parsed.stdout || '',
+          stderr: parsed.stderr || '',
+          output: parsed.stderr ? parsed.stderr : allPassed ? 'All test cases passed!' : 'One or more test cases failed.',
+          exitCode: parsed.exitCode !== undefined ? parsed.exitCode : (allPassed ? 0 : 1),
+          testCaseResults: results,
+          allPassed,
+          timeComplexity: parsed.timeComplexity || '',
+          spaceComplexity: parsed.spaceComplexity || '',
+        };
+      } catch (err) {
+        const isTemporary = err.message.includes('503') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED') || err.message.includes('UNAVAILABLE');
+        if (isTemporary && attempt === 1) {
+          await new Promise((res) => setTimeout(res, 1000));
+          continue;
+        }
+        console.warn(`[LeetCode Judge] Model ${model} error:`, err.message);
+        break;
       }
-
-      const parsed = JSON.parse(text);
-      const results = (parsed.testCaseResults || []).map((res, i) => ({
-        caseNumber: res.caseNumber || i + 1,
-        input: res.input || (testCases[i] ? testCases[i].input : ''),
-        expectedOutput: res.expectedOutput || (testCases[i] ? testCases[i].expectedOutput : ''),
-        actualOutput: res.actualOutput !== undefined ? String(res.actualOutput) : '(no return value)',
-        passed: Boolean(res.passed),
-        error: res.error || '',
-      }));
-
-      const allPassed = results.length > 0 ? results.every((r) => r.passed) : Boolean(parsed.allPassed);
-
-      return {
-        success: allPassed && !parsed.stderr,
-        language,
-        version: `${language} (LeetCode Online Judge)`,
-        stdout: parsed.stdout || '',
-        stderr: parsed.stderr || '',
-        output: parsed.stderr ? parsed.stderr : allPassed ? 'All test cases passed!' : 'One or more test cases failed.',
-        exitCode: parsed.exitCode !== undefined ? parsed.exitCode : (allPassed ? 0 : 1),
-        testCaseResults: results,
-        allPassed,
-        timeComplexity: parsed.timeComplexity || '',
-        spaceComplexity: parsed.spaceComplexity || '',
-      };
-    } catch (err) {
-      const isRateLimit = err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED') || err.message.includes('quota');
-      if (isRateLimit && attempt === 1) {
-        await new Promise((res) => setTimeout(res, 1500));
-        continue;
-      }
-
-      console.error('[LeetCode Judge] Error:', err.message);
-      const friendlyError = isRateLimit
-        ? 'AI judge rate limit reached (Gemini free tier quota). Please wait a few seconds before clicking Run Code again.'
-        : `Execution error: ${err.message}`;
-
-      return {
-        success: false,
-        language,
-        version: `${language} (LeetCode Online Judge)`,
-        stdout: '',
-        stderr: friendlyError,
-        output: friendlyError,
-        exitCode: 1,
-        testCaseResults: testCases.map((tc, idx) => ({
-          caseNumber: idx + 1,
-          input: tc.input,
-          expectedOutput: tc.expectedOutput,
-          actualOutput: '(execution failed)',
-          passed: false,
-          error: friendlyError,
-        })),
-        allPassed: false,
-        timeComplexity: '',
-        spaceComplexity: '',
-      };
     }
   }
+
+  const friendlyError = 'AI execution engine is temporarily busy with high traffic. Please retry in a few seconds.';
+
+  return {
+    success: false,
+    language,
+    version: `${language} (LeetCode Online Judge)`,
+    stdout: '',
+    stderr: friendlyError,
+    output: friendlyError,
+    exitCode: 1,
+    testCaseResults: testCases.map((tc, idx) => ({
+      caseNumber: idx + 1,
+      input: tc.input,
+      expectedOutput: tc.expectedOutput,
+      actualOutput: '(execution failed)',
+      passed: false,
+      error: friendlyError,
+    })),
+    allPassed: false,
+    timeComplexity: '',
+    spaceComplexity: '',
+  };
 };
 
 export const runCodeWithPiston = async ({ language = 'javascript', code, stdin = '' }) => {
@@ -279,4 +281,5 @@ export const runCodeWithPiston = async ({ language = 'javascript', code, stdin =
   // For Python, C++, Java, use the AI sandboxed runner
   return executeWithAI({ language: lang, code, stdin });
 };
+
 

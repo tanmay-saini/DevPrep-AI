@@ -11,6 +11,33 @@ const getGeminiClient = () => {
   return new GoogleGenAI({ apiKey });
 };
 
+const MODELS = ['gemini-3.6-flash', 'gemini-3-flash-preview'];
+
+// Helper with automatic model fallback & retry
+export const generateWithFallback = async (prompt) => {
+  const ai = getGeminiClient();
+  for (const model of MODELS) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+        });
+        return response;
+      } catch (err) {
+        const isTemporary = err.message.includes('503') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED') || err.message.includes('UNAVAILABLE');
+        if (isTemporary && attempt === 1) {
+          await new Promise((res) => setTimeout(res, 1000));
+          continue;
+        }
+        console.warn(`[Gemini Service] Model ${model} failed:`, err.message);
+        break;
+      }
+    }
+  }
+  throw new Error('All Gemini model backends are temporarily busy. Please retry in a few moments.');
+};
+
 // Helper to extract valid JSON from Gemini response even if wrapped in markdown ```json blocks
 const cleanAndParseJSON = (rawText) => {
   if (!rawText) return null;
@@ -63,11 +90,7 @@ Return your evaluation strictly in the following valid JSON format (do not inclu
 }`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-    });
-
+    const response = await generateWithFallback(prompt);
     const parsed = cleanAndParseJSON(response.text);
     return {
       score: typeof parsed.score === 'number' ? Math.min(10, Math.max(0, parsed.score)) : 7.0,
@@ -90,8 +113,6 @@ Return your evaluation strictly in the following valid JSON format (do not inclu
 };
 
 export const generateInterviewDebrief = async ({ track, turns }) => {
-  const ai = getGeminiClient();
-
   const formattedTurns = turns
     .map(
       (t, i) =>
@@ -116,11 +137,7 @@ Provide a comprehensive, encouraging, and constructive interview summary in vali
 }`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-    });
-
+    const response = await generateWithFallback(prompt);
     const parsed = cleanAndParseJSON(response.text);
     return parsed;
   } catch (error) {
@@ -137,8 +154,6 @@ Provide a comprehensive, encouraging, and constructive interview summary in vali
 };
 
 export const evaluateResume = async ({ resumeText, targetRole = 'Full Stack Web Developer / SDE' }) => {
-  const ai = getGeminiClient();
-
   const prompt = `You are a Principal Technical Recruiter and Engineering Hiring Manager reviewing a software engineer's resume for the role of: "${targetRole}".
 
 Resume Text Content:
@@ -191,11 +206,7 @@ Respond strictly in valid JSON format:
 }`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-    });
-
+    const response = await generateWithFallback(prompt);
     const parsed = cleanAndParseJSON(response.text);
     return {
       atsScore: typeof parsed.atsScore === 'number' ? Math.min(100, Math.max(0, parsed.atsScore)) : 75,
