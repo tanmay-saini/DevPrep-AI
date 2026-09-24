@@ -52,45 +52,23 @@ export const CodingPracticePage = () => {
   // Default fallback starter function templates
   const defaultTemplates = {
     javascript: `/**
- * Write your JavaScript solution below:
+ * @return {any}
  */
-function solution() {
-  // Write your solution here
-  return true;
-}
-
-// Driver call
-console.log(solution());`,
-    python: `# Write your Python solution below:
-def solution():
-    # Write your solution here
-    return True
-
-# Driver call
-print(solution())`,
-    cpp: `// Write your C++ solution below:
-#include <iostream>
-#include <vector>
-using namespace std;
-
-void solution() {
-    // Write your solution here
-}
-
-int main() {
-    solution();
-    return 0;
-}`,
-    java: `// Write your Java solution below:
-import java.util.*;
-
-public class Main {
-    public static void solution() {
-        // Write your solution here
+var solution = function() {
+    
+};`,
+    python: `class Solution:
+    def solution(self):
+        pass`,
+    cpp: `class Solution {
+public:
+    void solution() {
+        
     }
-
-    public static void main(String[] args) {
-        solution();
+};`,
+    java: `class Solution {
+    public void solution() {
+        
     }
 }`,
   };

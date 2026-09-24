@@ -1,4 +1,4 @@
-import { runCodeWithPiston } from '../services/pistonService.js';
+import { runCodeWithPiston, judgeLeetCodeExecution } from '../services/pistonService.js';
 import { Question } from '../models/Question.js';
 import { Attempt } from '../models/Attempt.js';
 
@@ -13,46 +13,57 @@ export const runCode = async (req, res, next) => {
       });
     }
 
-    // Execute the user code via Piston
-    const executionResult = await runCodeWithPiston({ language, code, stdin });
-
+    let executionResult;
     let testCaseResults = [];
-    let allPassed = executionResult.success;
+    let allPassed = false;
 
-    // If question has defined test cases, run validation
+    // Check if problem with test cases exists
+    let question = null;
     if (questionId) {
-      const question = await Question.findById(questionId);
-      if (question && question.testCases && question.testCases.length > 0) {
-        testCaseResults = question.testCases.map((tc, idx) => {
-          // Check if expected output is found in stdout
-          const expectedClean = tc.expectedOutput.trim();
-          const isMatch = executionResult.stdout.includes(expectedClean) || executionResult.output.includes(expectedClean);
-          return {
-            caseNumber: idx + 1,
-            input: tc.input,
-            expectedOutput: tc.expectedOutput,
-            actualOutput: executionResult.stdout || executionResult.output || '(no output)',
-            passed: isMatch && executionResult.exitCode === 0,
-            isHidden: tc.isHidden || false,
-          };
-        });
+      question = await Question.findById(questionId);
+    }
 
-        allPassed = testCaseResults.length > 0 ? testCaseResults.every((t) => t.passed) : executionResult.success;
-      }
+    if (question && question.testCases && question.testCases.length > 0) {
+      // Run through automated LeetCode judge
+      const judgeRes = await judgeLeetCodeExecution({
+        language,
+        code,
+        testCases: question.testCases,
+        problemTitle: question.title,
+      });
 
-      // Record attempt if user is authenticated
-      if (req.user) {
-        await Attempt.create({
-          userId: req.user._id,
-          questionId,
-          type: 'coding',
-          language,
-          code,
-          status: allPassed ? 'passed' : executionResult.stderr ? 'error' : 'failed',
-          testCasesPassed: testCaseResults.filter((t) => t.passed).length,
-          testCasesTotal: testCaseResults.length,
-        });
-      }
+      executionResult = {
+        success: judgeRes.success,
+        language: judgeRes.language,
+        version: judgeRes.version,
+        stdout: judgeRes.stdout,
+        stderr: judgeRes.stderr,
+        output: judgeRes.output,
+        exitCode: judgeRes.exitCode,
+        timeComplexity: judgeRes.timeComplexity,
+        spaceComplexity: judgeRes.spaceComplexity,
+      };
+
+      testCaseResults = judgeRes.testCaseResults || [];
+      allPassed = judgeRes.allPassed;
+    } else {
+      // Generic code execution
+      executionResult = await runCodeWithPiston({ language, code, stdin });
+      allPassed = executionResult.success;
+    }
+
+    // Record attempt if user is authenticated and question exists
+    if (req.user && questionId) {
+      await Attempt.create({
+        userId: req.user._id,
+        questionId,
+        type: 'coding',
+        language,
+        code,
+        status: allPassed ? 'passed' : executionResult.stderr ? 'error' : 'failed',
+        testCasesPassed: testCaseResults.filter((t) => t.passed).length,
+        testCasesTotal: testCaseResults.length,
+      });
     }
 
     res.status(200).json({
@@ -65,3 +76,4 @@ export const runCode = async (req, res, next) => {
     next(error);
   }
 };
+

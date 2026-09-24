@@ -142,6 +142,135 @@ Respond strictly in valid JSON format:
   }
 };
 
+// Dedicated LeetCode Testcase Execution Judge
+export const judgeLeetCodeExecution = async ({ language, code, testCases = [], problemTitle = '' }) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is required for code execution judge.');
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const formattedTestCases = testCases
+    .map((tc, i) => `Case ${i + 1}:\nInput: ${tc.input}\nExpected Output: ${tc.expectedOutput}`)
+    .join('\n\n');
+
+  const prompt = `You are an automated LeetCode Online Judge and code execution engine.
+
+Problem Title: ${problemTitle || 'DSA Problem'}
+Language: ${language}
+
+User Submission:
+\`\`\`${language}
+${code}
+\`\`\`
+
+Test Cases:
+${formattedTestCases}
+
+INSTRUCTIONS:
+1. First, check if the code has syntax/compilation errors or missing classes/functions. If so, set "stderr" to the error message and "allPassed" to false.
+2. If the syntax is valid, simulate executing the user's class (e.g. Solution) or function with the provided inputs for EACH test case.
+3. For each test case:
+   - "actualOutput": string representation of the exact value returned by the function (e.g. "[0, 1]", "true", "false", "42", "[[1,2]]").
+   - "passed": boolean true if actualOutput matches the expectedOutput (disregard minor whitespace/formatting differences, e.g. [0,1] equals [0, 1]), false otherwise.
+   - "error": error message string if an exception occurred during this test case, otherwise "".
+4. If all test cases pass, "allPassed" is true.
+5. Provide time and space complexity estimates (e.g. "O(n)", "O(1)").
+
+Respond STRICTLY in valid JSON (no markdown wrapping, no extra text):
+{
+  "allPassed": <boolean>,
+  "stdout": "<any stdout if printed, else empty string>",
+  "stderr": "<syntax or compiler error if any, else empty string>",
+  "exitCode": <0 if compiled and ran, 1 if syntax/compile error>,
+  "timeComplexity": "<e.g. O(n)>",
+  "spaceComplexity": "<e.g. O(1)>",
+  "testCaseResults": [
+    {
+      "caseNumber": 1,
+      "input": "<input from case 1>",
+      "expectedOutput": "<expected from case 1>",
+      "actualOutput": "<actual output returned>",
+      "passed": <boolean>,
+      "error": "<error if any>"
+    }
+  ]
+}`;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: prompt,
+      });
+
+      let text = response.text.trim();
+      if (text.startsWith('```')) {
+        text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      }
+
+      const parsed = JSON.parse(text);
+      const results = (parsed.testCaseResults || []).map((res, i) => ({
+        caseNumber: res.caseNumber || i + 1,
+        input: res.input || (testCases[i] ? testCases[i].input : ''),
+        expectedOutput: res.expectedOutput || (testCases[i] ? testCases[i].expectedOutput : ''),
+        actualOutput: res.actualOutput !== undefined ? String(res.actualOutput) : '(no return value)',
+        passed: Boolean(res.passed),
+        error: res.error || '',
+      }));
+
+      const allPassed = results.length > 0 ? results.every((r) => r.passed) : Boolean(parsed.allPassed);
+
+      return {
+        success: allPassed && !parsed.stderr,
+        language,
+        version: `${language} (LeetCode Online Judge)`,
+        stdout: parsed.stdout || '',
+        stderr: parsed.stderr || '',
+        output: parsed.stderr ? parsed.stderr : allPassed ? 'All test cases passed!' : 'One or more test cases failed.',
+        exitCode: parsed.exitCode !== undefined ? parsed.exitCode : (allPassed ? 0 : 1),
+        testCaseResults: results,
+        allPassed,
+        timeComplexity: parsed.timeComplexity || '',
+        spaceComplexity: parsed.spaceComplexity || '',
+      };
+    } catch (err) {
+      const isRateLimit = err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED') || err.message.includes('quota');
+      if (isRateLimit && attempt === 1) {
+        await new Promise((res) => setTimeout(res, 1500));
+        continue;
+      }
+
+      console.error('[LeetCode Judge] Error:', err.message);
+      const friendlyError = isRateLimit
+        ? 'AI judge rate limit reached (Gemini free tier quota). Please wait a few seconds before clicking Run Code again.'
+        : `Execution error: ${err.message}`;
+
+      return {
+        success: false,
+        language,
+        version: `${language} (LeetCode Online Judge)`,
+        stdout: '',
+        stderr: friendlyError,
+        output: friendlyError,
+        exitCode: 1,
+        testCaseResults: testCases.map((tc, idx) => ({
+          caseNumber: idx + 1,
+          input: tc.input,
+          expectedOutput: tc.expectedOutput,
+          actualOutput: '(execution failed)',
+          passed: false,
+          error: friendlyError,
+        })),
+        allPassed: false,
+        timeComplexity: '',
+        spaceComplexity: '',
+      };
+    }
+  }
+};
+
 export const runCodeWithPiston = async ({ language = 'javascript', code, stdin = '' }) => {
   const lang = language.toLowerCase();
   if (lang === 'javascript' || lang === 'js') {
@@ -150,3 +279,4 @@ export const runCodeWithPiston = async ({ language = 'javascript', code, stdin =
   // For Python, C++, Java, use the AI sandboxed runner
   return executeWithAI({ language: lang, code, stdin });
 };
+
