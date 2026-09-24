@@ -147,11 +147,15 @@ public:
     setSelectedCaseIdx(0);
 
     try {
-      const res = await api.post('/code/run', {
-        language,
-        code,
-        questionId: selectedQuestion?._id,
-      });
+      const res = await api.post(
+        '/code/run',
+        {
+          language,
+          code,
+          questionId: selectedQuestion?._id,
+        },
+        { timeout: 90000 }
+      );
 
       if (res.data.success) {
         setExecutionResult(res.data.execution);
@@ -160,9 +164,14 @@ public:
         setActiveOutputTab(res.data.testCaseResults?.length > 0 ? 'testcases' : 'stdout');
       }
     } catch (err) {
+      const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
+      const errorMsg = isTimeout
+        ? 'Request timed out waiting for runner. Render free tier backend may have been spinning up. Please try again now.'
+        : err.response?.data?.message || err.message || 'Execution error contacting runner service.';
+
       setExecutionResult({
         success: false,
-        stderr: err.response?.data?.message || 'Execution error contacting runner service.',
+        stderr: errorMsg,
       });
       setActiveOutputTab('stdout');
     } finally {
